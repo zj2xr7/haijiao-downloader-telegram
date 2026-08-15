@@ -1,0 +1,16 @@
+version: "3.8"
+
+services:
+  haijiao-bot:
+    build: .
+    container_name: haijiao-downloader-telegram
+    restart: unless-stopped
+    volumes:
+      # Mount host rclone configuration file (read-only)
+      - ~/.config/rclone/rclone.conf:/root/.config/rclone/rclone.conf:ro
+      # Mount local temporary download directory
+      - ./downloads_temp:/app/downloads_temp
+      # Mount environment settings
+      - ./.env:/app/.env:ro
+    environment:
+      - PYTHONUNBUFFERED=1

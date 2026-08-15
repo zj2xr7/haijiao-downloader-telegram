@@ -11,8 +11,7 @@ from src.core.crawler import HaijiaoCrawler
 from src.core.disk_guard import DiskGuard
 from src.core.resolver import DomainResolver
 from src.bot.middlewares.auth import AuthMiddleware
-from src.bot.handlers.base import router as base_router
-from src.bot.handlers.download import router as download_router
+from src.bot.handlers import setup_base_router, setup_download_router
 from src.utils.logger import logger
 
 
@@ -48,7 +47,7 @@ def create_bot_and_dispatcher(
     dp["resolver"] = resolver
 
     # Register Routers
-    dp.include_router(base_router)
-    dp.include_router(download_router)
+    dp.include_router(setup_base_router())
+    dp.include_router(setup_download_router())
 
     return bot, dp

@@ -1,4 +1,4 @@
-from src.bot.handlers.base import router as base_router
-from src.bot.handlers.download import router as download_router
+from src.bot.handlers.base import setup_base_router
+from src.bot.handlers.download import setup_download_router
 
-__all__ = ["base_router", "download_router"]
+__all__ = ["setup_base_router", "setup_download_router"]
