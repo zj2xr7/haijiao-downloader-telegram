@@ -1,0 +1,46 @@
+# ========================================================
+# 海角下载自动化机器人配置文件 (config.yaml)
+# ========================================================
+
+# 1. Telegram Bot 基础配置
+bot:
+  # 从 Telegram 的 @BotFather 获取的 Bot Token
+  token: "123456789:ABCdefGHIjklMNOpqrSTUvwxYZ"
+  # 允许使用该机器人的 Telegram 用户 ID 列表（数字数组）。留空则不限制访问。
+  allowed_user_ids:
+    - 123456789
+    - 987654321
+
+# 2. 发布页与网络探测配置
+network:
+  # 永久发布页地址（用于自动提取与测速最新的可用海角镜像域名）
+  publish_page_url: "https://hjw2026.com"
+  # 镜像域名自动刷新周期（单位：小时）
+  domain_refresh_interval_hours: 6
+  # 请求超时时间（单位：秒）
+  request_timeout_seconds: 30
+  # 单帖多媒体（图片/视频分片）并发下载数
+  max_download_concurrency: 2
+
+# 3. VPS 本地存储与防爆盘 (DiskGuard) 安全配置
+storage:
+  # 本地临时下载与排版缓存目录（上传完成后会自动彻底清理释放磁盘）
+  temp_download_dir: "./downloads_temp"
+  # 磁盘安全红线（单位：GB）：当 VPS 可用空间低于此数值时，自动挂起新帖下载，待后台上传完成释放空间后自动唤醒
+  min_free_disk_gb: 2.0
+
+# 4. Rclone 云存储上传配置
+rclone:
+  # rclone.conf 配置文件路径（留空则默认使用系统 ~/.config/rclone/rclone.conf）
+  config_path: ""
+  # OneDrive 远端目标存储路径（格式为 "配置名:存储子路径"）
+  remote_dest: "onedrive:Media/Haijiao"
+  # 最大后台异步上传并发任务数
+  max_upload_concurrency: 2
+
+# 5. OpenList 访问与直达链接映射配置
+openlist:
+  # 你的 OpenList 站点访问基础 URL（不带末尾斜杠）
+  base_url: "https://pan.example.com"
+  # OneDrive 在 OpenList 中的挂载路径（以斜杠开头）
+  mount_path: "/Media/Haijiao"

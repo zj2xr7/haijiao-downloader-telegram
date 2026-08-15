@@ -1,9 +1,17 @@
 """
 Main application startup entrypoint.
 """
+import os
 import sys
+from pathlib import Path
+
+# Ensure project root directory is added to sys.path
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 import asyncio
-from src.config import settings
+from src.config import settings, load_settings
 from src.utils.logger import logger
 from src.utils.http_client import http_client
 from src.core.resolver import DomainResolver
@@ -18,30 +26,33 @@ from src.bot.bot_app import create_bot_and_dispatcher
 
 async def main():
     """Initializes all services and starts Telegram long polling."""
+    # Reload settings in case config path was passed via args or env
+    current_settings = load_settings()
+
     logger.info("=========================================================")
     logger.info("   🚀 Haijiao Downloader Telegram Bot starting up...    ")
     logger.info("=========================================================")
     
-    if not settings.BOT_TOKEN:
-        logger.error("FATAL: BOT_TOKEN is empty! Please configure BOT_TOKEN in .env or environment variables.")
+    if not current_settings.BOT_TOKEN:
+        logger.error("FATAL: bot.token is empty! Please configure bot.token in config.yaml or environment variables.")
         sys.exit(1)
 
-    logger.info(f"Allowed User IDs: {settings.allowed_user_id_list or 'ALL (Open)'}")
-    logger.info(f"Publish Page URL: {settings.PUBLISH_PAGE_URL}")
-    logger.info(f"Disk Guard Threshold: {settings.MIN_FREE_DISK_GB} GB")
-    logger.info(f"Rclone Remote Destination: {settings.RCLONE_REMOTE_DEST}")
-    logger.info(f"OpenList Base URL: {settings.OPENLIST_BASE_URL}")
+    logger.info(f"Allowed User IDs: {current_settings.allowed_user_id_list or 'ALL (Open)'}")
+    logger.info(f"Publish Page URL: {current_settings.PUBLISH_PAGE_URL}")
+    logger.info(f"Disk Guard Threshold: {current_settings.MIN_FREE_DISK_GB} GB")
+    logger.info(f"Rclone Remote Destination: {current_settings.RCLONE_REMOTE_DEST}")
+    logger.info(f"OpenList Base URL: {current_settings.OPENLIST_BASE_URL}")
 
     # 1. Instantiate Core Engine Components
-    resolver = DomainResolver(settings=settings, http_cli=http_client)
-    crawler = HaijiaoCrawler(settings=settings, resolver=resolver, http_cli=http_client)
-    decryptor = MediaDecryptor(settings=settings, http_cli=http_client)
+    resolver = DomainResolver(settings=current_settings, http_cli=http_client)
+    crawler = HaijiaoCrawler(settings=current_settings, resolver=resolver, http_cli=http_client)
+    decryptor = MediaDecryptor(settings=current_settings, http_cli=http_client)
     renderer = MarkdownRenderer()
-    disk_guard = DiskGuard(settings=settings)
-    uploader = RcloneUploader(settings=settings, disk_guard=disk_guard)
+    disk_guard = DiskGuard(settings=current_settings)
+    uploader = RcloneUploader(settings=current_settings, disk_guard=disk_guard)
 
     pipeline = PipelineManager(
-        settings=settings,
+        settings=current_settings,
         crawler=crawler,
         decryptor=decryptor,
         renderer=renderer,
@@ -50,7 +61,7 @@ async def main():
     )
 
     # 2. Wire and Initialize Telegram Bot
-    bot, dp = create_bot_and_dispatcher(settings=settings, pipeline=pipeline)
+    bot, dp = create_bot_and_dispatcher(settings=current_settings, pipeline=pipeline)
 
     logger.info("Connecting to Telegram Bot API & starting polling dispatcher...")
     try:

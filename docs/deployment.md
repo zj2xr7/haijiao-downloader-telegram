@@ -45,33 +45,32 @@ rclone lsd onedrive:
 
 ## 3. 项目部署方式一：Docker Compose 容器化部署 (推荐)
 
-### 3.1 编写 `docker-compose.yml`
+### 3.1 `docker-compose.yml` 配置说明
 
 ```yaml
-version: "3.8"
-
 services:
   haijiao-bot:
     build: .
     container_name: haijiao-downloader-telegram
     restart: unless-stopped
     volumes:
-      # 挂载宿主机的 rclone 配置文件
+      # 挂载宿主机的 rclone 配置文件 (只读)
       - ~/.config/rclone/rclone.conf:/root/.config/rclone/rclone.conf:ro
+      # 挂载 yaml 配置文件 (只读)
+      - ./config.yaml:/app/config.yaml:ro
       # 挂载临时下载目录
       - ./downloads_temp:/app/downloads_temp
-      # 挂载配置文件
-      - ./.env:/app/.env:ro
     environment:
+      - PYTHONPATH=/app
       - PYTHONUNBUFFERED=1
 ```
 
-### 3.2 编写 `Dockerfile`
+### 3.2 `Dockerfile` 说明
 
 ```dockerfile
 FROM python:3.11-slim
 
-# 安装系统依赖 (ffmpeg, rclone, ca-certificates)
+# 安装系统依赖 (ffmpeg, rclone, ca-certificates, curl)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     rclone \
@@ -80,6 +79,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+
+ENV PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1
 
 # 安装 Python 依赖
 COPY requirements.txt .
@@ -91,15 +93,15 @@ COPY . .
 # 创建临时下载目录
 RUN mkdir -p downloads_temp
 
-CMD ["python", "src/main.py"]
+CMD ["python", "-m", "src.main"]
 ```
 
 ### 3.3 启动服务
 
 ```bash
-# 复制并修改环境变量配置
-cp .env.example .env
-nano .env
+# 复制并修改 YAML 配置文件
+cp config.example.yaml config.yaml
+nano config.yaml
 
 # 构建并后台启动
 docker compose up -d --build
@@ -134,10 +136,10 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/root/haijiao-downloader-telegram
-ExecStart=/root/haijiao-downloader-telegram/venv/bin/python src/main.py
+ExecStart=/root/haijiao-downloader-telegram/venv/bin/python -m src.main
 Restart=always
 RestartSec=5
-EnvironmentFile=/root/haijiao-downloader-telegram/.env
+Environment=PYTHONPATH=/root/haijiao-downloader-telegram
 
 [Install]
 WantedBy=multi-user.target
@@ -163,10 +165,11 @@ sudo journalctl -u haijiao-bot -f
 1. 假设 OneDrive 存储结构为：
    `onedrive:Media/Haijiao/{author_folder}/{post_folder}/`
 2. 假设你的 OpenList 站点地址为 `https://pan.mydomain.com`，且将上述 OneDrive 挂载于 `/Media/Haijiao` 路径下。
-3. 在 `.env` 中配置：
-   ```ini
-   OPENLIST_BASE_URL=https://pan.mydomain.com
-   OPENLIST_MOUNT_PATH=/Media/Haijiao
+3. 在 `config.yaml` 中配置：
+   ```yaml
+   openlist:
+     base_url: "https://pan.mydomain.com"
+     mount_path: "/Media/Haijiao"
    ```
 4. 任务完成后，Bot 将输出如下直达链接：
    `https://pan.mydomain.com/Media/Haijiao/{author_name}_{author_id}/[{post_id}]%20{title}/`

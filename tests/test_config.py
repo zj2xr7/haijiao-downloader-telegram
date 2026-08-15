@@ -2,19 +2,60 @@
 Tests for configuration and models.
 """
 import pytest
-from src.config import Settings
+from pathlib import Path
+from src.config import Settings, load_settings
 from src.models import PostDetail, MediaItem, ContentSegment, TaskStage, TaskResult
 
 
-def test_settings_default_values(monkeypatch):
-    monkeypatch.setenv("BOT_TOKEN", "test_bot_token_123")
-    monkeypatch.setenv("ALLOWED_USER_IDS", "111,222,333")
-    monkeypatch.setenv("MIN_FREE_DISK_GB", "3.5")
-    settings = Settings()
-    assert settings.BOT_TOKEN == "test_bot_token_123"
+def test_settings_from_yaml(tmp_path):
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("""
+bot:
+  token: "test_bot_token_yaml_123"
+  allowed_user_ids:
+    - 111
+    - 222
+    - 333
+network:
+  publish_page_url: "https://hjw2026.com"
+  domain_refresh_interval_hours: 8
+  request_timeout_seconds: 45
+  max_download_concurrency: 3
+storage:
+  temp_download_dir: "./custom_downloads"
+  min_free_disk_gb: 3.5
+rclone:
+  config_path: "/root/.config/rclone/rclone.conf"
+  remote_dest: "onedrive:Media/Custom"
+  max_upload_concurrency: 4
+openlist:
+  base_url: "https://pan.custom.com"
+  mount_path: "/Media/Custom"
+""", encoding="utf-8")
+
+    settings = load_settings(config_path=str(config_file))
+    assert settings.BOT_TOKEN == "test_bot_token_yaml_123"
     assert settings.allowed_user_id_list == [111, 222, 333]
     assert settings.MIN_FREE_DISK_GB == 3.5
     assert settings.PUBLISH_PAGE_URL == "https://hjw2026.com"
+    assert settings.DOMAIN_REFRESH_INTERVAL_HOURS == 8
+    assert settings.REQUEST_TIMEOUT_SECONDS == 45
+    assert settings.MAX_DOWNLOAD_CONCURRENCY == 3
+    assert settings.RCLONE_REMOTE_DEST == "onedrive:Media/Custom"
+    assert settings.MAX_UPLOAD_CONCURRENCY == 4
+    assert settings.OPENLIST_BASE_URL == "https://pan.custom.com"
+    assert settings.OPENLIST_MOUNT_PATH == "/Media/Custom"
+
+
+def test_settings_kwargs_override():
+    settings = Settings(
+        BOT_TOKEN="direct_token_999",
+        ALLOWED_USER_IDS="888,999",
+        MIN_FREE_DISK_GB=4.0
+    )
+    assert settings.BOT_TOKEN == "direct_token_999"
+    assert settings.allowed_user_id_list == [888, 999]
+    assert settings.MIN_FREE_DISK_GB == 4.0
 
 
 def test_post_detail_model():
