@@ -23,10 +23,11 @@ def setup_base_router() -> Router:
             "• 📚 **作者批量**：发送作者主页链接，支持交互式选择下载页码范围\n"
             "• 🛡️ **智能防爆盘**：内置 DiskGuard，边下边传，自动释放 VPS 空间\n"
             "• 📂 **OpenList 联动**：任务完成自动生成并发送 Web 查看直达链接\n\n"
-            "💡 **快捷操作**：\n"
-            "• 直接发送海角任意链接或纯 ID\n"
-            "• 发送 `/status` 查看 VPS 存储与线路健康状态\n"
-            "• 发送 `/help` 查看帮助说明"
+            "💡 **快捷操作（点击蓝色命令直接触发）**：\n"
+            "• 发送海角任意帖子/作者主页链接或纯 ID\n"
+            "• 点击 /status 查看 VPS 存储与线路健康状态\n"
+            "• 点击 /help 查看详细使用说明\n"
+            "• 点击 /dl 下载指定链接"
         )
         await message.answer(welcome_text, parse_mode="Markdown")
 
@@ -39,7 +40,11 @@ def setup_base_router() -> Router:
             "2. **下载作者名下帖子**：\n"
             "   发送作者主页链接（如 `https://.../user/home?uid=9988`），Bot 将弹出分页选择按钮，点击即可开始批量下载。\n\n"
             "3. **系统状态查看**：\n"
-            "   输入 `/status` 查看 VPS 磁盘空间、下载阈值以及当前活跃的镜像域名。"
+            "   点击 /status 查看 VPS 磁盘空间、下载阈值以及当前活跃的镜像域名。\n\n"
+            "4. **快捷命令**：\n"
+            "   • /status - 检查运行状态\n"
+            "   • /help - 帮助说明\n"
+            "   • /start - 重新启动"
         )
         await message.answer(help_text, parse_mode="Markdown")
 
@@ -54,7 +59,8 @@ def setup_base_router() -> Router:
             f"🛡️ **下载安全阈值**: `{settings.MIN_FREE_DISK_GB} GB`\n"
             f"🌐 **当前活跃域名**: `{active_domain}`\n"
             f"☁️ **云存储目标**: `{settings.RCLONE_REMOTE_DEST}`\n"
-            f"📂 **OpenList 站点**: `{settings.OPENLIST_BASE_URL}`"
+            f"📂 **OpenList 站点**: `{settings.OPENLIST_BASE_URL}`\n\n"
+            "💡 可点击 /help 查看使用说明，或直接发送链接开启下载。"
         )
         await message.answer(status_text, parse_mode="Markdown")
 

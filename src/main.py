@@ -21,7 +21,7 @@ from src.core.renderer import MarkdownRenderer
 from src.core.disk_guard import DiskGuard
 from src.core.uploader import RcloneUploader
 from src.core.pipeline import PipelineManager
-from src.bot.bot_app import create_bot_and_dispatcher
+from src.bot.bot_app import create_bot_and_dispatcher, setup_bot_commands
 
 
 async def main():
@@ -34,7 +34,7 @@ async def main():
     logger.info("=========================================================")
     
     if not current_settings.BOT_TOKEN:
-        logger.error("FATAL: bot.token is empty! Please configure bot.token in config.yaml or environment variables.")
+        logger.error("FATAL: bot.token is empty! Please configure bot.token in config.yaml.")
         sys.exit(1)
 
     logger.info(f"Allowed User IDs: {current_settings.allowed_user_id_list or 'ALL (Open)'}")
@@ -62,6 +62,9 @@ async def main():
 
     # 2. Wire and Initialize Telegram Bot
     bot, dp = create_bot_and_dispatcher(settings=current_settings, pipeline=pipeline)
+
+    # 3. Register Slash Command Menu in Telegram UI
+    await setup_bot_commands(bot)
 
     logger.info("Connecting to Telegram Bot API & starting polling dispatcher...")
     try:
