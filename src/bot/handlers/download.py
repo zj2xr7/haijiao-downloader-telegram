@@ -37,7 +37,7 @@ def setup_download_router() -> Router:
         if text.startswith("/dl"):
             parts = text.split(maxsplit=1)
             if len(parts) < 2:
-                await message.answer("ℹ️ 请在 `/dl` 后附加帖子或作者链接，例如：`/dl https://.../post/1234`")
+                await message.answer("ℹ️ 请在 /dl 后附加帖子或作者链接，例如：`/dl https://.../post/1234`")
                 return
             text = parts[1].strip()
 

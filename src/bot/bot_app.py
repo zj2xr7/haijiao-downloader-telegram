@@ -1,8 +1,9 @@
 """
-Telegram Bot Application setup, dependency injection and Dispatcher wiring.
+Telegram Bot Application setup, dependency injection, Dispatcher wiring and command menu registration.
 """
 from typing import Tuple, Optional
 from aiogram import Bot, Dispatcher
+from aiogram.types import BotCommand
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from src.config import Settings, settings as default_settings
@@ -13,6 +14,24 @@ from src.core.resolver import DomainResolver
 from src.bot.middlewares.auth import AuthMiddleware
 from src.bot.handlers import setup_base_router, setup_download_router
 from src.utils.logger import logger
+
+
+async def setup_bot_commands(bot: Bot) -> None:
+    """
+    Registers slash commands in the Telegram client UI so the command menu pops up
+    when users type '/' or click the Menu button.
+    """
+    commands = [
+        BotCommand(command="start", description="启动机器人与功能简介"),
+        BotCommand(command="status", description="查看 VPS 存储、线路与系统状态"),
+        BotCommand(command="help", description="详细使用指南与支持格式"),
+        BotCommand(command="dl", description="下载指定帖子或作者主页")
+    ]
+    try:
+        await bot.set_my_commands(commands)
+        logger.info("Successfully registered Telegram Bot command menu.")
+    except Exception as exc:
+        logger.warning(f"Failed to register Telegram bot commands: {exc}")
 
 
 def create_bot_and_dispatcher(
