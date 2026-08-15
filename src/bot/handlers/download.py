@@ -1,8 +1,11 @@
 """
-Download task handlers for single posts and author batches.
+Download task handlers for single posts and author batches using HTML formatting.
 """
 import re
+import html
+import time
 import asyncio
+from typing import Optional
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
@@ -21,6 +24,14 @@ class AuthorDownloadState(StatesGroup):
     waiting_for_custom_pages = State()
 
 
+def generate_progress_bar(percent: int, length: int = 10) -> str:
+    """Generates an ASCII/Unicode progress bar like [██████░░░░]."""
+    percent = max(0, min(100, percent))
+    filled = int((percent / 100) * length)
+    empty = length - filled
+    return f"[{'█' * filled}{'░' * empty}] {percent}%"
+
+
 def setup_download_router() -> Router:
     """Creates and configures a fresh download router."""
     router = Router(name="download_router")
@@ -37,7 +48,7 @@ def setup_download_router() -> Router:
         if text.startswith("/dl"):
             parts = text.split(maxsplit=1)
             if len(parts) < 2:
-                await message.answer("ℹ️ 请在 /dl 后附加帖子或作者链接，例如：`/dl https://.../post/1234`")
+                await message.answer("ℹ️ 请在 /dl 后附加帖子或作者链接，例如：<code>/dl 191635</code>", parse_mode="HTML")
                 return
             text = parts[1].strip()
 
@@ -72,10 +83,10 @@ def setup_download_router() -> Router:
 
         await callback.answer(f"🚀 已启动批量任务：第 {range_str} 页", show_alert=False)
         await callback.message.edit_text(
-            f"🚀 **作者 [{author_id}] 批量下载任务已启动！**\n"
-            f"📑 正在下载第 `{range_str}` 页帖子...\n"
-            f"⚡ 下载和上传将在后台全自动进行，完成后将发送汇总链接。",
-            parse_mode="Markdown"
+            f"🚀 <b>作者 [{html.escape(author_id)}] 批量下载任务已启动！</b>\n\n"
+            f"📑 <b>任务范围</b>: 第 <code>{html.escape(range_str)}</code> 页作品\n"
+            f"⚡ 边下载边上传流水线作业中，完成后将发送汇总与 OpenList 直达卡片。",
+            parse_mode="HTML"
         )
 
         asyncio.create_task(run_author_batch_background(callback.message, author_id, pages, pipeline))
@@ -87,13 +98,13 @@ def setup_download_router() -> Router:
         await state.update_data(author_id=author_id)
 
         await callback.message.edit_text(
-            f"✏️ **请输入作者 [{author_id}] 需要下载的页码范围**\n\n"
+            f"✏️ <b>请输入作者 [{html.escape(author_id)}] 需要下载的页码范围</b>\n\n"
             f"示例格式：\n"
-            f"• `1` (仅第 1 页)\n"
-            f"• `1-3` (第 1 到 3 页)\n"
-            f"• `2,4,6` (指定第 2、4、6 页)\n\n"
-            f"请直接回复消息输入：",
-            parse_mode="Markdown"
+            f"• <code>1</code> (仅第 1 页)\n"
+            f"• <code>1-3</code> (第 1 到 3 页)\n"
+            f"• <code>2,4,6</code> (指定第 2、4、6 页)\n\n"
+            f"请直接回复本会话：",
+            parse_mode="HTML"
         )
         await callback.answer()
 
@@ -128,9 +139,9 @@ def setup_download_router() -> Router:
             return
 
         await message.answer(
-            f"🚀 **作者 [{author_id}] 自定义页码 `{pages}` 批量任务已启动！**\n"
-            f"后台正在流水线作业中...",
-            parse_mode="Markdown"
+            f"🚀 <b>作者 [{html.escape(author_id)}] 自定义页码 <code>{pages}</code> 批量任务已启动！</b>\n"
+            f"后台流水线作业中...",
+            parse_mode="HTML"
         )
         asyncio.create_task(run_author_batch_background(message, author_id, pages, pipeline))
 
@@ -144,16 +155,47 @@ def setup_download_router() -> Router:
 
 
 async def start_single_post_download(message: Message, post_id: str, pipeline: PipelineManager):
-    """Executes single post download with live Telegram message updates."""
-    status_msg = await message.answer(f"⏳ **[Post {post_id}]** 任务已接收，正在排队解析...", parse_mode="Markdown")
+    """Executes single post download with rich, live Telegram HTML message updates."""
+    status_msg = await message.answer(
+        f"⏳ <b>[Post {html.escape(post_id)}]</b> 任务已接收，正在排队解析...",
+        parse_mode="HTML"
+    )
     last_update_text = ""
+    last_edit_time = 0.0
 
-    async def update_progress(pid: str, text: str):
-        nonlocal last_update_text
-        if text != last_update_text:
-            last_update_text = text
+    async def update_progress(
+        post_id: str,
+        stage_desc: str,
+        title: str = "",
+        author: str = "",
+        stage: TaskStage = TaskStage.DOWNLOADING,
+        percent: int = 0,
+        media_detail: str = ""
+    ):
+        nonlocal last_update_text, last_edit_time
+        now = time.monotonic()
+        
+        # Throttle Telegram message updates to avoid 429 rate limits
+        if now - last_edit_time < 1.2 and percent not in (0, 100):
+            return
+
+        bar = generate_progress_bar(percent)
+        free_gb = pipeline.disk_guard.get_free_space_gb()
+
+        card_text = (
+            f"⏳ <b>[Post {html.escape(post_id)}] 下载流水线作业中</b>\n\n"
+            f"📖 <b>标题</b>: {html.escape(title or f'Post {post_id}')}\n"
+            f"👤 <b>创作者</b>: {html.escape(author or '解析中...')}\n"
+            f"📊 <b>进度</b>: <code>{bar}</code>\n"
+            f"📌 <b>状态</b>: {stage_desc}\n"
+            f"💾 <b>VPS 剩余</b>: <code>{free_gb} GB</code>"
+        )
+
+        if card_text != last_update_text:
+            last_update_text = card_text
+            last_edit_time = now
             try:
-                await status_msg.edit_text(f"⏳ **[Post {pid}]**\n{text}", parse_mode="Markdown")
+                await status_msg.edit_text(card_text, parse_mode="HTML")
             except Exception:
                 pass
 
@@ -161,35 +203,45 @@ async def start_single_post_download(message: Message, post_id: str, pipeline: P
 
     if result.stage == TaskStage.COMPLETED:
         summary_text = (
-            "✅ **下载并上传完成！**\n\n"
-            f"📖 **标题**: {result.title}\n"
-            f"👤 **作者**: {result.author_name}\n"
-            f"🖼️ **图片**: {result.downloaded_images} 张 | 🎬 **视频**: {result.downloaded_videos} 部\n"
-            f"⏱️ **耗时**: {result.elapsed_seconds} 秒\n\n"
-            f"🔗 **已归档至 OneDrive 并生成 OpenList 索引**"
+            "🎉 <b>下载与网盘上传全部完成！</b>\n\n"
+            f"📖 <b>标题</b>: {html.escape(result.title)}\n"
+            f"👤 <b>创作者</b>: {html.escape(result.author_name)}\n"
+            f"🖼️ <b>图片</b>: {result.downloaded_images} 张 | 🎬 <b>视频</b>: {result.downloaded_videos} 部\n"
+            f"⏱️ <b>总耗时</b>: {result.elapsed_seconds} 秒\n\n"
+            f"☁️ <b>媒体已安全归档至 OneDrive 并生成 OpenList 索引</b>"
         )
         kb = build_openlist_button(result.openlist_url) if result.openlist_url else None
-        await status_msg.edit_text(summary_text, reply_markup=kb, parse_mode="Markdown")
+        try:
+            await status_msg.edit_text(summary_text, reply_markup=kb, parse_mode="HTML")
+        except Exception:
+            await message.answer(summary_text, reply_markup=kb, parse_mode="HTML")
     else:
+        err_detail = html.escape(result.error_message or "未知异常")
         fail_text = (
-            f"❌ **处理失败 [Post {post_id}]**\n\n"
-            f"⚠️ **原因**: {result.error_message or '未知错误'}"
+            f"❌ <b>处理失败 [Post {html.escape(post_id)}]</b>\n\n"
+            f"⚠️ <b>原因</b>:\n<pre>{err_detail}</pre>\n\n"
+            f"💡 <b>排查提示</b>:\n"
+            f"• 若为 Rclone 报错，请检查 VPS 上的 <code>rclone.conf</code> 是否已配置好该 remote 节点并正确挂载。\n"
+            f"• 若为网络抓取报错，Bot 将自动在后续请求中轮询切换可用镜像。"
         )
-        await status_msg.edit_text(fail_text, parse_mode="Markdown")
+        try:
+            await status_msg.edit_text(fail_text, parse_mode="HTML")
+        except Exception:
+            await message.answer(fail_text, parse_mode="HTML")
 
 
 async def start_author_interaction(message: Message, author_id: str, crawler: HaijiaoCrawler, state: FSMContext):
     """Fetches author profile and presents the interactive page selector."""
-    loading_msg = await message.answer(f"🔍 正在查询作者 `{author_id}` 的主页信息...", parse_mode="Markdown")
+    loading_msg = await message.answer(f"🔍 正在查询作者 <code>{html.escape(author_id)}</code> 的主页信息...", parse_mode="HTML")
     summary = await crawler.fetch_author_summary(author_id)
 
     author_card = (
-        f"👤 **作者主页**: **{summary.author_name}** (ID: `{summary.author_id}`)\n"
-        f"📊 **估算作品数**: 约 {summary.total_posts} 篇 | 共 {summary.total_pages} 页\n\n"
-        f"👇 **请选择需要下载的页码范围**："
+        f"👤 <b>作者主页</b>: <b>{html.escape(summary.author_name)}</b> (ID: <code>{html.escape(summary.author_id)}</code>)\n"
+        f"📊 <b>作品规模</b>: 约 {summary.total_posts} 篇 | 共 {summary.total_pages} 页\n\n"
+        f"👇 <b>请选择需要下载的页码范围</b>："
     )
     kb = build_author_pages_keyboard(author_id, summary.total_pages)
-    await loading_msg.edit_text(author_card, reply_markup=kb, parse_mode="Markdown")
+    await loading_msg.edit_text(author_card, reply_markup=kb, parse_mode="HTML")
 
 
 async def run_author_batch_background(
@@ -207,18 +259,18 @@ async def run_author_batch_background(
             total_completed += 1
             kb = build_openlist_button(result.openlist_url) if result.openlist_url else None
             await message.answer(
-                f"✅ **[作者批量完成]**\n"
-                f"📖 `{result.title}` (编号: {result.post_id})\n"
+                f"✅ <b>[作者批量完成]</b>\n"
+                f"📖 <code>{html.escape(result.title)}</code> (编号: {html.escape(result.post_id)})\n"
                 f"🖼️ 图片: {result.downloaded_images} | 🎬 视频: {result.downloaded_videos}",
                 reply_markup=kb,
-                parse_mode="Markdown"
+                parse_mode="HTML"
             )
         else:
             total_failed += 1
 
     await message.answer(
-        f"🎉 **作者 [{author_id}] 批量任务全部结束！**\n\n"
-        f"✅ 成功完成: {total_completed} 篇\n"
-        f"❌ 失败: {total_failed} 篇",
-        parse_mode="Markdown"
+        f"🎉 <b>作者 [{html.escape(author_id)}] 批量任务全部结束！</b>\n\n"
+        f"✅ <b>成功完成</b>: {total_completed} 篇\n"
+        f"❌ <b>失败</b>: {total_failed} 篇",
+        parse_mode="HTML"
     )

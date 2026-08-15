@@ -3,11 +3,12 @@ Multimedia stream decryptor and format converter (AES-128 HLS & obfuscated image
 """
 import os
 import re
+import time
 import shutil
 import asyncio
 import subprocess
 from pathlib import Path
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Callable, Any
 from urllib.parse import urljoin
 
 from Crypto.Cipher import AES
@@ -71,7 +72,6 @@ class MediaDecryptor:
                 logger.debug(f"Image decoded successfully with XOR key 0x{test_key:02X}")
                 return self.decrypt_xor(raw_bytes, test_key)
 
-        # Fallback: return as-is
         return raw_bytes
 
     async def download_and_decrypt_image(self, media_item: MediaItem, output_file: Path) -> bool:
@@ -103,7 +103,6 @@ class MediaDecryptor:
         lines = [line.strip() for line in m3u8_text.splitlines() if line.strip()]
         for line in lines:
             if line.startswith("#EXT-X-KEY"):
-                # Example: #EXT-X-KEY:METHOD=AES-128,URI="https://.../key.key",IV=0x0123456789abcdef...
                 method_match = re.search(r"METHOD=([^,\s]+)", line)
                 uri_match = re.search(r'URI="([^"]+)"', line)
                 iv_match = re.search(r"IV=(0x[0-9a-fA-F]+)", line)
@@ -119,18 +118,38 @@ class MediaDecryptor:
 
         return key_url, iv, segments
 
-    async def fetch_ts_segment(self, client, seg_url: str, idx: int) -> Tuple[int, Optional[bytes]]:
-        """Fetches a single TS video slice."""
+    async def fetch_ts_segment(
+        self,
+        client,
+        seg_url: str,
+        idx: int,
+        on_segment_downloaded: Optional[Callable] = None
+    ) -> Tuple[int, Optional[bytes]]:
+        """Fetches a single TS video slice with retry."""
+        content = None
         for _ in range(3):
             try:
-                resp = await client.get(seg_url, timeout=20.0)
+                resp = await client.get(seg_url, timeout=25.0)
                 if resp.status_code == 200:
-                    return idx, resp.content
+                    content = resp.content
+                    break
             except Exception:
                 await asyncio.sleep(0.5)
-        return idx, None
 
-    async def download_and_decrypt_video_m3u8(self, media_item: MediaItem, output_file: Path) -> bool:
+        if on_segment_downloaded:
+            try:
+                on_segment_downloaded()
+            except Exception:
+                pass
+
+        return idx, content
+
+    async def download_and_decrypt_video_m3u8(
+        self,
+        media_item: MediaItem,
+        output_file: Path,
+        progress_callback: Optional[Callable[[int, int, str], Any]] = None
+    ) -> bool:
         """
         Downloads HLS m3u8 playlist, fetches AES key, decrypts TS slices in parallel,
         and produces a consolidated MP4 file.
@@ -139,9 +158,10 @@ class MediaDecryptor:
         raw_url = media_item.remote_url
 
         try:
-            # If not an m3u8 stream, download directly as a normal video file
             if not (".m3u8" in raw_url or "m3u8" in raw_url.lower()):
                 logger.info(f"Downloading standard video file from {raw_url}...")
+                if progress_callback:
+                    await progress_callback(1, 1, "正在下载视频流...")
                 resp = await self.http_client.get(raw_url)
                 if resp.status_code == 200 and resp.content:
                     output_file.write_bytes(resp.content)
@@ -160,6 +180,8 @@ class MediaDecryptor:
                 logger.warning(f"No video segments found in playlist: {raw_url}")
                 return False
 
+            total_segments = len(segment_urls)
+
             # Fetch key if AES-128 is specified
             key_bytes = None
             if key_url:
@@ -171,12 +193,55 @@ class MediaDecryptor:
                     logger.error(f"Failed to get key: {key_url}")
                     return False
 
-            logger.info(f"Downloading {len(segment_urls)} video segments concurrently...")
+            logger.info(f"Downloading {total_segments} video segments concurrently...")
             client = await self.http_client.get_client()
 
-            # Concurrently fetch TS segments
-            tasks = [self.fetch_ts_segment(client, seg_url, i) for i, seg_url in enumerate(segment_urls)]
-            segment_results = await asyncio.gather(*tasks)
+            # Progress tracking variables
+            completed_segments = 0
+            last_progress_time = 0.0
+
+            def on_seg_done():
+                nonlocal completed_segments
+                completed_segments += 1
+
+            async def progress_reporter():
+                """Periodically updates progress callback during TS downloads."""
+                nonlocal last_progress_time
+                if not progress_callback:
+                    return
+                while completed_segments < total_segments:
+                    now = time.monotonic()
+                    if now - last_progress_time >= 1.5:
+                        last_progress_time = now
+                        pct = int((completed_segments / total_segments) * 100)
+                        await progress_callback(
+                            completed_segments,
+                            total_segments,
+                            f"下载视频分片 [{completed_segments}/{total_segments}] ({pct}%)"
+                        )
+                    await asyncio.sleep(0.5)
+
+            reporter_task = None
+            if progress_callback:
+                reporter_task = asyncio.create_task(progress_reporter())
+
+            try:
+                tasks = [
+                    self.fetch_ts_segment(client, seg_url, i, on_segment_downloaded=on_seg_done)
+                    for i, seg_url in enumerate(segment_urls)
+                ]
+                segment_results = await asyncio.gather(*tasks)
+            finally:
+                if reporter_task:
+                    reporter_task.cancel()
+
+            # Final 100% callback
+            if progress_callback:
+                await progress_callback(
+                    total_segments,
+                    total_segments,
+                    f"视频分片下载完毕 [{total_segments}/{total_segments}]，正在解密拼装..."
+                )
 
             # Sort segments in order
             segment_results.sort(key=lambda x: x[0])
@@ -190,10 +255,8 @@ class MediaDecryptor:
 
                     # Decrypt if key is available
                     if key_bytes:
-                        # Use provided IV or derive from sequence index
                         seg_iv = iv_bytes or idx.to_bytes(16, byteorder="big")
                         cipher = AES.new(key_bytes, AES.MODE_CBC, seg_iv)
-                        # Ensure chunk length is a multiple of 16 for AES
                         pad_len = len(chunk_bytes) % 16
                         if pad_len != 0:
                             chunk_bytes = chunk_bytes[:-pad_len]
@@ -206,9 +269,11 @@ class MediaDecryptor:
                     else:
                         out_ts.write(chunk_bytes)
 
-            # Convert/Transcode TS to MP4 using ffmpeg if available, or rename directly
+            # Convert/Transcode TS to MP4 using ffmpeg if available
             if shutil.which("ffmpeg"):
                 logger.info("Converting decrypted TS to MP4 via ffmpeg...")
+                if progress_callback:
+                    await progress_callback(total_segments, total_segments, "FFmpeg 正在合并与转封装 MP4 视频...")
                 cmd = [
                     "ffmpeg", "-y", "-i", str(temp_ts_path),
                     "-c", "copy", "-movflags", "faststart", str(output_file)
@@ -219,7 +284,6 @@ class MediaDecryptor:
                     media_item.download_success = True
                     return True
 
-            # If ffmpeg is not available, move TS stream directly to output
             if temp_ts_path.exists() and temp_ts_path.stat().st_size > 0:
                 shutil.move(str(temp_ts_path), str(output_file))
                 media_item.download_success = True

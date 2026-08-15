@@ -1,10 +1,11 @@
 """
 Rclone asynchronous subprocess executor and OpenList link generator.
 """
+import os
 import shutil
 import asyncio
 from pathlib import Path
-from typing import Tuple, Optional
+from typing import Tuple, Optional, List
 from urllib.parse import quote
 
 from src.config import Settings, settings as default_settings
@@ -26,6 +27,37 @@ class RcloneUploader:
         concurrency = max_upload_concurrency or self.settings.MAX_UPLOAD_CONCURRENCY
         self.upload_semaphore = asyncio.Semaphore(concurrency)
 
+    def resolve_rclone_config(self) -> Optional[str]:
+        """
+        Detects available rclone.conf locations automatically.
+        """
+        candidates: List[Path] = []
+        
+        # 1. Configured path if provided
+        if self.settings.RCLONE_CONFIG_PATH:
+            candidates.append(Path(self.settings.RCLONE_CONFIG_PATH))
+
+        # 2. Standard system & container paths
+        candidates.extend([
+            Path("/root/.config/rclone/rclone.conf"),
+            Path("/app/rclone.conf"),
+            Path("/root/haijiao-downloader-telegram/rclone.conf"),
+            Path.home() / ".config/rclone/rclone.conf",
+            Path("./rclone.conf").resolve()
+        ])
+
+        for path in candidates:
+            if path.exists() and path.is_file():
+                logger.info(f"Found active Rclone configuration at: {path}")
+                return str(path)
+
+        if self.settings.RCLONE_CONFIG_PATH:
+            logger.warning(
+                f"Configured rclone path '{self.settings.RCLONE_CONFIG_PATH}' was not found. "
+                "Will attempt running with rclone default environment."
+            )
+        return None
+
     def get_openlist_url(self, author_folder: str, post_folder: str) -> str:
         """
         Constructs the web direct access URL for OpenList based on remote directory structure.
@@ -33,7 +65,6 @@ class RcloneUploader:
         base = self.settings.OPENLIST_BASE_URL.rstrip("/")
         mount = self.settings.OPENLIST_MOUNT_PATH.strip("/")
         
-        # URL encode folder components
         enc_author = quote(author_folder)
         enc_post = quote(post_folder)
 
@@ -64,12 +95,13 @@ class RcloneUploader:
             "-v"
         ]
 
-        if self.settings.RCLONE_CONFIG_PATH:
-            cmd.extend(["--config", self.settings.RCLONE_CONFIG_PATH])
+        resolved_conf = self.resolve_rclone_config()
+        if resolved_conf:
+            cmd.extend(["--config", resolved_conf])
 
         async with self.upload_semaphore:
             try:
-                # If rclone binary is missing (e.g. mock test environment), check fallback
+                # If rclone binary is missing (e.g. mock test environment), simulate success
                 if not shutil.which("rclone"):
                     logger.warning("rclone command not found in PATH! Simulating local upload success.")
                     shutil.rmtree(local_dir, ignore_errors=True)
