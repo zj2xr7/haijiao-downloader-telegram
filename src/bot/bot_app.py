@@ -3,7 +3,12 @@ Telegram Bot Application setup, dependency injection, Dispatcher wiring and comm
 """
 from typing import Tuple, Optional
 from aiogram import Bot, Dispatcher
-from aiogram.types import BotCommand
+from aiogram.types import (
+    BotCommand,
+    BotCommandScopeDefault,
+    BotCommandScopeAllPrivateChats,
+    MenuButtonCommands
+)
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from src.config import Settings, settings as default_settings
@@ -22,14 +27,21 @@ async def setup_bot_commands(bot: Bot) -> None:
     when users type '/' or click the Menu button.
     """
     commands = [
-        BotCommand(command="start", description="启动机器人与功能简介"),
-        BotCommand(command="status", description="查看 VPS 存储、线路与系统状态"),
-        BotCommand(command="help", description="详细使用指南与支持格式"),
-        BotCommand(command="dl", description="下载指定帖子或作者主页")
+        BotCommand(command="start", description="🚀 启动机器人与功能简介"),
+        BotCommand(command="status", description="📊 查看 VPS 存储、线路与系统状态"),
+        BotCommand(command="help", description="📖 详细使用指南与支持格式"),
+        BotCommand(command="dl", description="📥 下载指定帖子或作者主页")
     ]
     try:
-        await bot.set_my_commands(commands)
-        logger.info("Successfully registered Telegram Bot command menu.")
+        # Register commands for all default scopes and locales
+        await bot.set_my_commands(commands, scope=BotCommandScopeDefault())
+        await bot.set_my_commands(commands, scope=BotCommandScopeAllPrivateChats())
+        await bot.set_my_commands(commands, scope=BotCommandScopeDefault(), language_code="zh")
+        await bot.set_my_commands(commands, scope=BotCommandScopeAllPrivateChats(), language_code="zh")
+
+        # Explicitly configure the chat Menu button to show commands list
+        await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+        logger.info("Successfully registered Telegram Bot command menu and Chat Menu Button.")
     except Exception as exc:
         logger.warning(f"Failed to register Telegram bot commands: {exc}")
 
