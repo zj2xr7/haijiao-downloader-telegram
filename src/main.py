@@ -63,8 +63,12 @@ async def main():
     # 2. Wire and Initialize Telegram Bot
     bot, dp = create_bot_and_dispatcher(settings=current_settings, pipeline=pipeline)
 
-    # 3. Register Slash Command Menu in Telegram UI
-    await setup_bot_commands(bot)
+    # 3. Clean up pending webhook & register Slash Command Menu in Telegram UI
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+        await setup_bot_commands(bot)
+    except Exception as exc:
+        logger.warning(f"Error during bot preparation: {exc}")
 
     logger.info("Connecting to Telegram Bot API & starting polling dispatcher...")
     try:
