@@ -29,45 +29,34 @@ class RcloneUploader:
 
     def resolve_rclone_config(self) -> Optional[str]:
         """
-        Detects available rclone.conf locations automatically, supporting both host and container paths.
+        Detects available rclone.conf locations.
+        Defaults to standard /root/.config/rclone/rclone.conf (mapped from host ./rclone.conf).
         """
+        candidates: List[Path] = []
+
+        # 1. Standard mapped path in container (from host ./rclone.conf)
+        candidates.append(Path("/root/.config/rclone/rclone.conf"))
+
+        # 2. Explicit config_path if provided in config.yaml
         configured = (self.settings.RCLONE_CONFIG_PATH or "").strip()
-
-        # 1. If explicit config_path is provided in config.yaml, prioritize it across all mapped paths
         if configured:
-            conf_filename = Path(configured).name
-            configured_candidates = [
-                Path(configured),
-                Path("/app/project_root") / conf_filename,
-                Path("/app") / conf_filename,
-                Path("./") / conf_filename,
-                Path("/root/.config/rclone") / conf_filename,
-            ]
-            for cp in configured_candidates:
-                if cp.exists() and cp.is_file():
-                    logger.info(f"Using explicitly configured Rclone config at: {cp} (from '{configured}')")
-                    return str(cp)
+            candidates.insert(0, Path(configured))
+            candidates.append(Path("/app") / Path(configured).name)
+            candidates.append(Path("./") / Path(configured).name)
 
-            logger.warning(
-                f"Specified rclone.config_path '{configured}' was not found in container "
-                f"(checked: {[str(c) for c in configured_candidates]})."
-            )
-
-        # 2. Automatic discovery across standard project and system locations
-        auto_candidates = [
-            Path("/app/project_root/rclone.conf"),
+        # 3. Local fallback paths
+        candidates.extend([
             Path("/app/rclone.conf"),
             Path("./rclone.conf").resolve(),
-            Path("/root/.config/rclone/rclone.conf"),
             Path.home() / ".config/rclone/rclone.conf"
-        ]
+        ])
 
-        for path in auto_candidates:
+        for path in candidates:
             if path.exists() and path.is_file():
-                logger.info(f"Auto-discovered active Rclone configuration at: {path}")
+                logger.info(f"Found active Rclone configuration at: {path}")
                 return str(path)
 
-        logger.warning("No custom or default rclone.conf found; attempting with rclone environment defaults.")
+        logger.warning("No rclone.conf found at /root/.config/rclone/rclone.conf or configured paths.")
         return None
 
     def get_openlist_url(self, author_folder: str, post_folder: str) -> str:

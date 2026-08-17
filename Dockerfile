@@ -21,7 +21,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 复制代码
 COPY . .
 
-# 创建临时下载目录
-RUN mkdir -p downloads_temp
+# 创建 rclone 默认目录和临时下载目录
+RUN mkdir -p /root/.config/rclone downloads_temp
 
 CMD ["python", "-m", "src.main"]

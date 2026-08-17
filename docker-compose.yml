@@ -4,13 +4,11 @@ services:
     container_name: haijiao-downloader-telegram
     restart: unless-stopped
     volumes:
-      # 挂载宿主机的 rclone 配置目录 (系统默认位置，支持 Token 自动续期回写)
-      - ~/.config/rclone:/root/.config/rclone
-      # 挂载项目根目录 (使得放在项目根目录下的 rclone.conf / config.yaml 可被实时读取)
-      - ./:/app/project_root:ro
-      # 挂载 yaml 配置文件 (只读)
+      # 映射项目根目录下的 rclone.conf 到容器内的默认配置路径
+      - ./rclone.conf:/root/.config/rclone/rclone.conf
+      # 映射 yaml 配置文件 (只读)
       - ./config.yaml:/app/config.yaml:ro
-      # 挂载临时下载目录
+      # 映射临时下载目录
       - ./downloads_temp:/app/downloads_temp
     environment:
       - PYTHONPATH=/app

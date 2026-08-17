@@ -14,38 +14,22 @@
 
 ---
 
-## 2. 外部依赖工具安装
+## 2. Rclone 配置（极简模式）
 
-### 2.1 安装 Rclone 与 FFmpeg (以 Ubuntu/Debian 为例)
+只需将包含 OneDrive 授权信息的 `rclone.conf` 直接放在项目根目录下即可（与 `docker-compose.yml` 同级）：
 
-```bash
-# 更新源并安装基础工具
-sudo apt update
-sudo apt install -y curl wget ffmpeg git
-
-# 安装官方最新版 Rclone
-sudo -v ; curl https://rclone.org/install.sh | sudo bash
-```
-
-### 2.2 配置 Rclone 对接 OneDrive
-
-```bash
-# 启动交互式配置引导
-rclone config
-
-# 按照提示选择新建 remote：
-# 1. Name: onedrive (或自定义名称)
-# 2. Type: 选 Microsoft OneDrive (通常是选项 31 左右)
-# 3. 按照提示完成网页端 OAuth 授权
-# 4. 测试连接：
-rclone lsd onedrive:
+```text
+haijiao-downloader-telegram/
+├── rclone.conf          <-- 直接放这里！
+├── config.yaml          <-- 配置文件
+└── docker-compose.yml
 ```
 
 ---
 
-## 3. 项目部署方式一：Docker Compose 容器化部署 (推荐)
+## 3. Docker Compose 一键启动
 
-### 3.1 `docker-compose.yml` 配置说明
+### 3.1 `docker-compose.yml` 挂载规则
 
 ```yaml
 services:
@@ -54,123 +38,30 @@ services:
     container_name: haijiao-downloader-telegram
     restart: unless-stopped
     volumes:
-      # 挂载宿主机的 rclone 配置文件 (只读)
-      - ~/.config/rclone/rclone.conf:/root/.config/rclone/rclone.conf:ro
-      # 挂载 yaml 配置文件 (只读)
+      # 映射项目根目录下的 rclone.conf 到容器内的默认配置路径
+      - ./rclone.conf:/root/.config/rclone/rclone.conf
+      # 映射 yaml 配置文件 (只读)
       - ./config.yaml:/app/config.yaml:ro
-      # 挂载临时下载目录
+      # 映射临时下载目录
       - ./downloads_temp:/app/downloads_temp
     environment:
       - PYTHONPATH=/app
       - PYTHONUNBUFFERED=1
 ```
 
-### 3.2 `Dockerfile` 说明
-
-```dockerfile
-FROM python:3.11-slim
-
-# 安装系统依赖 (ffmpeg, rclone, ca-certificates, curl)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
-    rclone \
-    ca-certificates \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /app
-
-ENV PYTHONPATH=/app \
-    PYTHONUNBUFFERED=1
-
-# 安装 Python 依赖
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# 复制代码
-COPY . .
-
-# 创建临时下载目录
-RUN mkdir -p downloads_temp
-
-CMD ["python", "-m", "src.main"]
-```
-
-### 3.3 启动服务
+### 3.2 启动与验证
 
 ```bash
-# 复制并修改 YAML 配置文件
+# 1. 复制并编辑 config.yaml
 cp config.example.yaml config.yaml
 nano config.yaml
 
-# 构建并后台启动
+# 2. 启动服务
 docker compose up -d --build
 
-# 查看实时运行日志
+# 3. 验证容器内 Rclone 连通性 (假设 remote 名称为 e5)
+docker compose exec haijiao-bot rclone lsd e5:
+
+# 4. 查看实时日志
 docker compose logs -f
 ```
-
----
-
-## 4. 项目部署方式二：Systemd 守护进程运行 (原生 Python)
-
-### 4.1 安装 Python 依赖
-
-```bash
-# 进入项目目录并创建虚拟环境
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
-
-### 4.2 创建 Systemd 服务文件
-
-创建 `/etc/systemd/system/haijiao-bot.service`：
-
-```ini
-[Unit]
-Description=Haijiao Downloader Telegram Bot Service
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/root/haijiao-downloader-telegram
-ExecStart=/root/haijiao-downloader-telegram/venv/bin/python -m src.main
-Restart=always
-RestartSec=5
-Environment=PYTHONPATH=/root/haijiao-downloader-telegram
-
-[Install]
-WantedBy=multi-user.target
-```
-
-### 4.3 管理命令
-
-```bash
-# 重载服务并设置开机自启
-sudo systemctl daemon-reload
-sudo systemctl enable haijiao-bot
-sudo systemctl start haijiao-bot
-
-# 查看运行状态与日志
-sudo systemctl status haijiao-bot
-sudo journalctl -u haijiao-bot -f
-```
-
----
-
-## 5. OpenList 联动与链接映射说明
-
-1. 假设 OneDrive 存储结构为：
-   `onedrive:Media/Haijiao/{author_folder}/{post_folder}/`
-2. 假设你的 OpenList 站点地址为 `https://pan.mydomain.com`，且将上述 OneDrive 挂载于 `/Media/Haijiao` 路径下。
-3. 在 `config.yaml` 中配置：
-   ```yaml
-   openlist:
-     base_url: "https://pan.mydomain.com"
-     mount_path: "/Media/Haijiao"
-   ```
-4. 任务完成后，Bot 将输出如下直达链接：
-   `https://pan.mydomain.com/Media/Haijiao/{author_name}_{author_id}/[{post_id}]%20{title}/`
-   用户点击即可在 OpenList 网页端直接浏览文章排版与视频。

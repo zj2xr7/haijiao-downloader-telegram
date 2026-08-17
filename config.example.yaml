@@ -31,7 +31,7 @@ storage:
 
 # 4. Rclone 云存储上传配置
 rclone:
-  # rclone.conf 配置文件路径（留空则默认使用系统 ~/.config/rclone/rclone.conf）
+  # rclone.conf 路径：直接将 rclone.conf 放在项目根目录下即可，留空 "" 默认自动加载
   config_path: ""
   # OneDrive 远端目标存储路径（格式为 "配置名:存储子路径"）
   remote_dest: "onedrive:Media/Haijiao"
