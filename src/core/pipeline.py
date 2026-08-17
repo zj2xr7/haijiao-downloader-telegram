@@ -1,5 +1,5 @@
 """
-Full duplex download-upload pipeline manager and job coordinator.
+Full duplex download-upload pipeline manager and job coordinator with live progress tracking.
 """
 import time
 import inspect
@@ -54,7 +54,6 @@ class PipelineManager:
             sig = inspect.signature(callback)
             params = list(sig.parameters.values())
 
-            # Check if callback accepts kwargs or exact 2 positional args
             if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params):
                 res = callback(
                     post_id=post_id,
@@ -66,10 +65,8 @@ class PipelineManager:
                     media_detail=media_detail
                 )
             elif len(params) == 2:
-                # Classic (post_id, text) callback signature
                 res = callback(post_id, stage_desc)
             else:
-                # Try calling with keyword arguments
                 res = callback(
                     post_id=post_id,
                     stage_desc=stage_desc,
@@ -83,7 +80,7 @@ class PipelineManager:
             if inspect.isawaitable(res):
                 await res
         except Exception as exc:
-            logger.debug(f"Progress callback invocation skipped: {exc}")
+            logger.debug(f"Progress callback invocation error: {exc}")
 
     async def _download_media_assets(
         self,
@@ -99,14 +96,15 @@ class PipelineManager:
             if seg.segment_type == "image" and seg.media_item:
                 media = seg.media_item
                 out_file = post_dir / media.relative_path
+                img_pct = 15 + int((img_success / max(1, post.total_images)) * 10)
                 await self._emit_progress(
                     progress_callback,
                     post_id=post.post_id,
-                    stage_desc=f"🖼️ 正在下载并解密图片 [{img_success + 1}/{post.total_images}]...",
+                    stage_desc=f"🖼️ <b>[图片下载]</b> 正在下载并解密图片 [{img_success + 1}/{post.total_images}]...",
                     title=post.title,
                     author=post.author_name,
                     stage=TaskStage.DOWNLOADING,
-                    percent=int((img_success / max(1, post.total_images)) * 50)
+                    percent=img_pct
                 )
                 ok = await self.decryptor.download_and_decrypt_image(media, out_file)
                 if ok:
@@ -117,15 +115,17 @@ class PipelineManager:
                 out_file = post_dir / media.relative_path
 
                 async def on_video_progress(completed: int, total: int, status_text: str):
-                    pct = int((completed / max(1, total)) * 100)
+                    fraction = (completed / max(1, total))
+                    # Map TS segment download (0-100%) to overall (25%-70%)
+                    overall_pct = 25 + int(fraction * 45)
                     await self._emit_progress(
                         progress_callback,
                         post_id=post.post_id,
-                        stage_desc=f"🎬 <b>[视频下载]</b> {status_text}",
+                        stage_desc=f"🎬 <b>[视频下载]</b> TS 分片 <code>{completed}/{total}</code> ({int(fraction * 100)}%)",
                         title=post.title,
                         author=post.author_name,
                         stage=TaskStage.DOWNLOADING,
-                        percent=pct,
+                        percent=overall_pct,
                         media_detail=f"TS 分片: {completed}/{total}"
                     )
 
@@ -141,14 +141,7 @@ class PipelineManager:
         progress_callback: Optional[Callable] = None
     ) -> TaskResult:
         """
-        Executes the full pipeline for a single post:
-        1. Fetch metadata & layout
-        2. Wait for DiskGuard clearance
-        3. Download & decrypt media
-        4. Render post.md
-        5. Release download slot immediately
-        6. Asynchronously upload to OneDrive & cleanup local temp folder
-        7. Generate OpenList link
+        Executes the full pipeline for a single post with live multi-stage tracking.
         """
         start_time = time.monotonic()
         logger.info(f"Pipeline: Starting processing for post {post_id}")
@@ -156,7 +149,7 @@ class PipelineManager:
         await self._emit_progress(
             progress_callback,
             post_id=post_id,
-            stage_desc="🔍 [1/4] 正在解析文章元数据与排版结构...",
+            stage_desc="🔍 [1/5] 正在解析文章元数据与排版结构...",
             title=f"Post {post_id}",
             author="加载中...",
             stage=TaskStage.RESOLVING,
@@ -182,11 +175,11 @@ class PipelineManager:
         await self._emit_progress(
             progress_callback,
             post_id=post_id,
-            stage_desc=f"🛡️ [2/4] 磁盘检查通过 ({free_gb} GB 可用)，准备下载媒体...",
+            stage_desc=f"🛡️ [2/5] 磁盘安全检查通过 ({free_gb} GB 可用)，进入下载队列...",
             title=post.title,
             author=post.author_name,
-            stage=TaskStage.DOWNLOADING,
-            percent=25
+            stage=TaskStage.WAITING_DISK,
+            percent=20
         )
 
         await self.disk_guard.acquire_download_slot()
@@ -200,11 +193,11 @@ class PipelineManager:
             await self._emit_progress(
                 progress_callback,
                 post_id=post_id,
-                stage_desc="📝 [3/4] 媒体就绪，正在生成 Markdown 图文排版与元数据...",
+                stage_desc="📝 [3/5] 媒体下载就绪，正在生成 Markdown 图文排版与元数据...",
                 title=post.title,
                 author=post.author_name,
                 stage=TaskStage.RENDERING,
-                percent=85
+                percent=75
             )
             self.renderer.save_markdown_file(post, post_dir)
         except Exception as exc:
@@ -219,10 +212,9 @@ class PipelineManager:
                 elapsed_seconds=round(time.monotonic() - start_time, 2)
             )
         finally:
-            # Release download slot so next post can begin downloading immediately
             self.disk_guard.release_download_slot()
 
-        # 5. Upload via Rclone in background
+        # 5. Upload via Rclone in background with live progress tracking
         author_folder = self.renderer.get_author_folder_name(post)
         post_folder = self.renderer.get_post_folder_name(post)
         remote_subpath = f"{author_folder}/{post_folder}"
@@ -230,14 +222,34 @@ class PipelineManager:
         await self._emit_progress(
             progress_callback,
             post_id=post_id,
-            stage_desc="☁️ [4/4] 本地排版完成，正在通过 Rclone 上传至 OneDrive...",
+            stage_desc="☁️ [4/5] 正在建立 Rclone 传输通道连接 OneDrive...",
             title=post.title,
             author=post.author_name,
             stage=TaskStage.UPLOADING,
-            percent=95
+            percent=80
         )
 
-        upload_ok, err_msg = await self.uploader.upload_and_cleanup(post_dir, remote_subpath)
+        async def on_upload_progress(rclone_pct: int, transferred: str, speed: str, eta: str):
+            # Map Rclone upload (0-100%) to overall (80%-99%)
+            overall_upload_pct = 80 + int((rclone_pct / 100) * 19)
+            await self._emit_progress(
+                progress_callback,
+                post_id=post.post_id,
+                stage_desc=(
+                    f"☁️ <b>[网盘上传]</b> <code>{rclone_pct}%</code> ({transferred})\n"
+                    f"⚡ 速度: <code>{speed}</code> | ⏱️ 预估剩余: <code>{eta}</code>"
+                ),
+                title=post.title,
+                author=post.author_name,
+                stage=TaskStage.UPLOADING,
+                percent=overall_upload_pct
+            )
+
+        upload_ok, err_msg = await self.uploader.upload_and_cleanup(
+            post_dir,
+            remote_subpath,
+            progress_callback=on_upload_progress
+        )
 
         elapsed = round(time.monotonic() - start_time, 2)
         if upload_ok:

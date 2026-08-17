@@ -1,11 +1,13 @@
 """
-Rclone asynchronous subprocess executor and OpenList link generator.
+Rclone asynchronous subprocess executor and OpenList link generator with live progress streaming.
 """
 import os
+import re
 import shutil
+import inspect
 import asyncio
 from pathlib import Path
-from typing import Tuple, Optional, List
+from typing import Tuple, Optional, List, Callable, Any
 from urllib.parse import quote
 
 from src.config import Settings, settings as default_settings
@@ -73,9 +75,15 @@ class RcloneUploader:
             return f"{base}/{mount}/{enc_author}/{enc_post}/"
         return f"{base}/{enc_author}/{enc_post}/"
 
-    async def upload_and_cleanup(self, local_dir: Path, remote_subpath: str) -> Tuple[bool, str]:
+    async def upload_and_cleanup(
+        self,
+        local_dir: Path,
+        remote_subpath: str,
+        progress_callback: Optional[Callable[[int, str, str, str], Any]] = None
+    ) -> Tuple[bool, str]:
         """
-        Uploads a local post directory to OneDrive and removes it upon success to free disk space.
+        Uploads a local post directory to OneDrive with live progress streaming,
+        and removes it upon success to free disk space.
         Returns (success: bool, error_message: str).
         """
         if not local_dir.exists():
@@ -92,7 +100,7 @@ class RcloneUploader:
             "--retries", "3",
             "--transfers", "4",
             "--checkers", "4",
-            "--stats-one-line",
+            "--stats", "1s",
             "-v"
         ]
 
@@ -115,7 +123,32 @@ class RcloneUploader:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE
                 )
-                stdout, stderr = await proc.communicate()
+
+                stderr_lines: List[str] = []
+                stat_pattern = re.compile(
+                    r"Transferred:\s*([\d.]+\s*[A-Za-z]+(?:\s*/\s*[\d.]+\s*[A-Za-z]+)?),\s*(\d+)%,\s*([\d.]+\s*[A-Za-z/]+),\s*ETA\s*([\w\d]+)"
+                )
+
+                async def read_stderr():
+                    while True:
+                        line_bytes = await proc.stderr.readline()
+                        if not line_bytes:
+                            break
+                        line_str = line_bytes.decode(errors="replace").strip()
+                        stderr_lines.append(line_str)
+
+                        if "Transferred:" in line_str:
+                            match = stat_pattern.search(line_str)
+                            if match and progress_callback:
+                                transferred, pct, speed, eta = match.groups()
+                                try:
+                                    res = progress_callback(int(pct), transferred, speed, eta)
+                                    if inspect.isawaitable(res):
+                                        await res
+                                except Exception:
+                                    pass
+
+                await asyncio.gather(read_stderr(), proc.wait())
 
                 if proc.returncode == 0:
                     logger.info(f"Rclone upload completed successfully for {remote_subpath}. Cleaning up local directory...")
@@ -124,7 +157,7 @@ class RcloneUploader:
                         self.disk_guard.notify_disk_freed()
                     return True, ""
                 else:
-                    err_msg = stderr.decode(errors="replace").strip()
+                    err_msg = "\n".join(stderr_lines[-8:]) if stderr_lines else "Unknown rclone failure"
                     logger.error(f"Rclone upload failed with exit code {proc.returncode}: {err_msg}")
                     return False, err_msg
 

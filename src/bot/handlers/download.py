@@ -162,6 +162,7 @@ async def start_single_post_download(message: Message, post_id: str, pipeline: P
     )
     last_update_text = ""
     last_edit_time = 0.0
+    last_stage = None
 
     async def update_progress(
         post_id: str,
@@ -172,11 +173,12 @@ async def start_single_post_download(message: Message, post_id: str, pipeline: P
         percent: int = 0,
         media_detail: str = ""
     ):
-        nonlocal last_update_text, last_edit_time
+        nonlocal last_update_text, last_edit_time, last_stage
         now = time.monotonic()
-        
-        # Throttle Telegram message updates to avoid 429 rate limits
-        if now - last_edit_time < 1.2 and percent not in (0, 100):
+
+        # Always update on stage transitions or at 0% / 100%, otherwise throttle to 0.8s
+        is_stage_changed = (stage != last_stage)
+        if not is_stage_changed and (now - last_edit_time < 0.8) and percent not in (0, 100):
             return
 
         bar = generate_progress_bar(percent)
@@ -186,7 +188,7 @@ async def start_single_post_download(message: Message, post_id: str, pipeline: P
             f"⏳ <b>[Post {html.escape(post_id)}] 下载流水线作业中</b>\n\n"
             f"📖 <b>标题</b>: {html.escape(title or f'Post {post_id}')}\n"
             f"👤 <b>创作者</b>: {html.escape(author or '解析中...')}\n"
-            f"📊 <b>进度</b>: <code>{bar}</code>\n"
+            f"📊 <b>总进度</b>: <code>{bar}</code>\n"
             f"📌 <b>状态</b>: {stage_desc}\n"
             f"💾 <b>VPS 剩余</b>: <code>{free_gb} GB</code>"
         )
@@ -194,6 +196,7 @@ async def start_single_post_download(message: Message, post_id: str, pipeline: P
         if card_text != last_update_text:
             last_update_text = card_text
             last_edit_time = now
+            last_stage = stage
             try:
                 await status_msg.edit_text(card_text, parse_mode="HTML")
             except Exception:
@@ -221,7 +224,7 @@ async def start_single_post_download(message: Message, post_id: str, pipeline: P
             f"❌ <b>处理失败 [Post {html.escape(post_id)}]</b>\n\n"
             f"⚠️ <b>原因</b>:\n<pre>{err_detail}</pre>\n\n"
             f"💡 <b>排查提示</b>:\n"
-            f"• 若为 Rclone 报错，请检查 VPS 上的 <code>rclone.conf</code> 是否已配置好该 remote 节点并正确挂载。\n"
+            f"• 若为 Rclone 报错，请检查 <code>rclone.conf</code> 是否已放置在项目根目录并能正常访问。\n"
             f"• 若为网络抓取报错，Bot 将自动在后续请求中轮询切换可用镜像。"
         )
         try:
